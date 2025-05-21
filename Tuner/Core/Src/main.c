@@ -27,10 +27,10 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define ADC_BUF_LEN 2048  // buferio dydis
-#define MIN_FREQ_HZ 70
+#define MIN_FREQ_HZ 70		// dažnių ribos
 #define MAX_FREQ_HZ 2000
-#define ADC_VREF 3.3f
-#define ADC_RESOLUTION 4096.0f
+#define ADC_VREF 3.3f		// galima palikti standartinį 3,3V
+#define ADC_RESOLUTION 4096.0f	// 2¹², 12 bitų ADC geba
 #define STABILITY_THRESHOLD 3.0f  /* (Hz)
 								 * ------------------------------------------------------------------------
 								 *  Maksimalus leistinas standartinis nuokrypis tarp paskutinių
@@ -56,23 +56,23 @@
 								 *    4+   itin stabilu, bet padidėja vėlinimas į ekraną / BLE
 								 *-------------------------------------------------------------------------*/
 
-float freq_buffer[AVG_FRAMES] = {0};
-uint8_t freq_index = 0;
-uint32_t min_bin, max_bin;
+float freq_buffer[AVG_FRAMES] = {0};   // žiedinis buferis dažniui prilyginti
+uint8_t freq_index = 0;			// rodyklė į kitą buferio langelį
+uint32_t min_bin, max_bin;		// FFT bin’ų intervalas, skaičiuojamas start’e
 
 #define LED_ON_DUTY  400     /* 40 % */
-#define LED_OFF_DUTY   0
+#define LED_OFF_DUTY   0	// išjungtas
 
-volatile uint8_t new_data_ready = 0;
+volatile uint8_t new_data_ready = 0;	// DMA callback’e užkeliama į 1, kai buferis pilnas
 
-uint16_t adc_buf[ADC_BUF_LEN];
-float32_t fft_input[ADC_BUF_LEN];
-float32_t fft_output[ADC_BUF_LEN];
-float32_t magnitudes[ADC_BUF_LEN / 2];
-char buffer[32];
-float sample_rate;
+uint16_t adc_buf[ADC_BUF_LEN];		// "žali" ADC mėginiai
+float32_t fft_input[ADC_BUF_LEN];	//tie patys, bet jau −DC ir su langu
+float32_t fft_output[ADC_BUF_LEN];	// sudėtas FFT rezultatas
+float32_t magnitudes[ADC_BUF_LEN / 2];	// |FFT| amplitudės (tik reikalinga pusė)
+char buffer[32];					// laikinas tekstas OLED/BLE
+float sample_rate;					// nustatoma vėliau pagal laikmatį 8000
 
-static float ref_note_freq = 0.0f;   /* artimiausios natos */
+static float ref_note_freq = 0.0f;   /* artimiausios natos Hz vertė*/
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -110,7 +110,7 @@ static void MX_TIM2_Init(void);
 static void MX_TIM17_Init(void);
 static void MX_RF_Init(void);
 /* USER CODE BEGIN PFP */
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {		//  kalibruojam ADC prieš matavimus
     new_data_ready = 1;
 }
 
@@ -239,10 +239,10 @@ int main(void)
   HAL_TIM_PWM_Start(&htim17, TIM_CHANNEL_1);     /* PA7 LED */
 
   HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
-  sample_rate = 8000.0f;
-  min_bin = (MIN_FREQ_HZ * ADC_BUF_LEN) / (uint32_t)sample_rate;
-  max_bin = (MAX_FREQ_HZ * ADC_BUF_LEN) / (uint32_t)sample_rate;
-  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN) != HAL_OK)
+  sample_rate = 8000.0f;	// 8 kHz – Nyquist 4 kHz > MAX_FREQ, paprasta laikmačiui
+  min_bin = (MIN_FREQ_HZ * ADC_BUF_LEN) / (uint32_t)sample_rate;	// formulė f -> bin  (N*f/Fs)
+  max_bin = (MAX_FREQ_HZ * ADC_BUF_LEN) / (uint32_t)sample_rate;	// tas pats viršutinei ribai
+  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN) != HAL_OK)	// paleidžiam ADC+DMA, kitaip stabdom dar stratuotėje
   Error_Handler();
 
   HAL_TIM_Base_Start(&htim2);                 // laikmatis paleidžiamas paskutinis
@@ -277,17 +277,17 @@ int main(void)
     MX_APPE_Process();
 
     /* USER CODE BEGIN 3 */
-    if (new_data_ready) {
+    if (new_data_ready) { //DMA užpildė ADC buferį – laikas apdoroti
 			// ADC duomenų apskaičiavimas
-			mean_adc = 0.0f;
-			min_adc = 4096.0f;
-			max_adc = 0.0f;
+			mean_adc = 0.0f;	// vidurkis
+			min_adc = 4096.0f;  // mažinsime
+			max_adc = 0.0f;		// didinsime
 			for (int i = 0; i < ADC_BUF_LEN; i++) {
-				mean_adc += adc_buf[i];
-				if (adc_buf[i] < min_adc) min_adc = adc_buf[i];
-				if (adc_buf[i] > max_adc) max_adc = adc_buf[i];
+				mean_adc += adc_buf[i];		// sumuojame visus
+				if (adc_buf[i] < min_adc) min_adc = adc_buf[i]; //ieškome mažiausio
+				if (adc_buf[i] > max_adc) max_adc = adc_buf[i]; //ieškome didžiausio
 			}
-			mean_adc /= ADC_BUF_LEN;
+			mean_adc /= ADC_BUF_LEN;	// vidutinis ADC
 
 			// DC pašalinimas + Blackman-Harris langas
 			for (int i = 0; i < ADC_BUF_LEN; i++) {
@@ -322,8 +322,8 @@ int main(void)
 				i++;
 			}
 
-			if (i > max_bin || (max_adc - min_adc) <= 5) {
-				freq = 0.0f;
+			if (i > max_bin || (max_adc - min_adc) <= 5) {	// jei nieko nėra arba signalas per silpnas,
+				freq = 0.0f;								// laikome, kad nėra garso
 				note = "-";
 			} else {
 				// Rasti vietinį maksimumą aplink i
@@ -419,12 +419,12 @@ int main(void)
 				#ifndef log2f
 				#define log2f(x) (logf(x) * 1.442695041f)
 				#endif
-				cents = 1200.0f * log2f(avg_freq / ref_note_freq);
+				cents = 1200.0f * log2f(avg_freq / ref_note_freq);	// 1200 centų = 1 oktava
 			}
 			draw_slider(cents);
 			ssd1306_UpdateScreen();
 
-			new_data_ready = 0;
+			new_data_ready = 0;		// baigėm apdoroti
 			last_update = HAL_GetTick();
 		}
 
@@ -432,7 +432,7 @@ int main(void)
 
     static uint32_t             led_last    = 0;     /* paskutine busena   */
     static uint8_t              led_on      = 0;     /* 0 = OFF, 1 = ON      */
-    static uint8_t              pulse_count = 0;
+    static uint8_t              pulse_count = 0;	// kiek impulsų jau parodyta dabartinėje sekoje
     const uint32_t now = HAL_GetTick();
 
     const uint32_t ON_MS     = 100;   /* ijungto LED laikas ms                       */
